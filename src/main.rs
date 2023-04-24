@@ -6,6 +6,7 @@ use axum::{
 };
 use hyper::http::HeaderValue;
 use hyper::Method;
+use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use std::{collections::HashMap, env};
 use tower_http::cors::{AllowOrigin, Cors};
@@ -31,6 +32,10 @@ async fn main() {
         ))
         .with(tracing_subscriber::fmt::layer())
         .init();
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await.expect("failed to connect database");
     let app = Router::new()
         .route(
             "/",
