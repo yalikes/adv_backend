@@ -14,8 +14,6 @@ CREATE TABLE group_message(
     admin_list bigint[],
 );
 
-CREATE TRIGGER check
-
 CREATE TABLE group(
 
 );
