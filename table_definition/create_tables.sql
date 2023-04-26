@@ -10,7 +10,7 @@ CREATE TABLE group_message(
     group_id REFERENCES group
     group_message varchar(4096),
     message_from REFERENCES user,
-    group_admin REFERENCES user,
+    group_host REFERENCES user,
     admin_list bigint[],
 );
 
