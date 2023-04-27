@@ -1,16 +1,19 @@
 use axum::{
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, IntoResponseParts},
     routing::{get, get_service, post},
-    Router, Json,
+    Json, Router,
 };
 use dotenvy::dotenv;
 use hyper::Method;
 use hyper::{header, http::HeaderValue, HeaderMap};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
-use std::net::SocketAddr;
 use std::{collections::HashMap, env};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 use std::{thread, time::Duration};
 use tower_http::cors::{AllowOrigin, Cors};
 use tower_http::{
@@ -40,13 +43,8 @@ async fn main() {
         .await
         .expect("failed to connect database");
     let app = Router::new()
-        .route(
-            "/",
-            get(|| async {
-                return "hello";
-            }),
-        )
-        .route("/testapi", get(test_api))
+        .route("/user_register", post(user_register))
+        .route("/user_login", post(user_login))
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(
@@ -63,15 +61,42 @@ async fn main() {
         .unwrap();
 }
 
+type SessionMap = Arc<Mutex<HashMap<Session, u64>>>;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Session {
     session_id: String,
 }
 
-async fn test_api() -> impl IntoResponse {
-    let session_id = Session {
-        session_id: "1".to_owned(),
-    };
-    // CORS cookie 不好搞, 用JSON吧
-    Json::from(session_id)
+#[derive(Debug, Serialize)]
+enum UserRegisterState {
+    Success,
+    NameUsed,
+    PasswordTooWeak,
+}
+
+#[derive(Debug, Serialize)]
+struct UserRegisterResultInfo {
+    state: UserRegisterState,
+    session_info: Option<Session>,
+}
+
+#[derive(Debug, Serialize)]
+enum UserLoginState {
+    Success,
+    WrongPassword,
+}
+
+#[derive(Debug, Serialize)]
+struct UserLoginInfo {
+    state: UserLoginState,
+    session_info: Option<Session>,
+}
+
+async fn user_register() -> Json<UserRegisterResultInfo> {
+    unimplemented!();
+}
+
+async fn user_login() -> Json<UserLoginInfo> {
+    unimplemented!();
 }
