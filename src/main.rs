@@ -1,15 +1,26 @@
+use app_state::AppState;
 use axum::{
+    async_trait,
+    extract::{FromRequest, State},
     http::StatusCode,
-    response::{IntoResponse, IntoResponseParts},
+    response::{IntoResponse, IntoResponseParts, Response},
     routing::{get, get_service, post},
     Json, Router,
 };
 use dotenvy::dotenv;
-use hyper::Method;
-use hyper::{header, http::HeaderValue, HeaderMap};
+use hyper::{
+    body::HttpBody,
+    header::{self, ACCEPT},
+    http::HeaderValue,
+    HeaderMap,
+};
+use hyper::{Method, Request};
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
-use std::{collections::HashMap, env};
+use std::env;
+use std::num::NonZeroUsize;
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -18,22 +29,25 @@ use std::{thread, time::Duration};
 use tower_http::cors::{AllowOrigin, Cors};
 use tower_http::{
     cors::{Any, CorsLayer},
-    services::ServeDir,
     trace::TraceLayer,
 };
 use tracing::{debug, info};
 use tracing_subscriber::{self};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use lru::LruCache;
-use std::num::NonZeroUsize;
 use uuid::{uuid, Uuid};
+
+mod app_state;
+mod helper;
+
+use helper::{ConnectionPool, Session, SessionMap};
 
 #[tokio::main]
 async fn main() {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must set");
 
-    let mut session_cache: LruCache<Session, String> = LruCache::new(NonZeroUsize::new(1024*1024).unwrap());
+    let mut session_cache: SessionMap =
+        Arc::new(LruCache::new(NonZeroUsize::new(1024 * 1024).unwrap()));
 
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::registry()
@@ -44,22 +58,28 @@ async fn main() {
         .init();
 
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(32)
         .connect(&database_url)
         .await
         .expect("failed to connect database");
+    let mut state = AppState {
+        sesson_map: session_cache,
+        db_pool: pool,
+    };
     let app = Router::new()
-        .route("/user_register", post(user_register))
-        .route("/user_login", post(user_login))
+        .route("/user/register", post(user_register))
+        .route("/user/login", post(user_login))
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(
                     ["http://frontend.org", "http://frontend.org:5173"]
                         .map(|x| x.parse::<HeaderValue>().unwrap()),
                 ))
-                .allow_methods([Method::GET, Method::POST]),
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers(Any),
         )
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .with_state(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
@@ -67,18 +87,11 @@ async fn main() {
         .unwrap();
 }
 
-type SessionMap = Arc<Mutex<HashMap<Session, u64>>>;
-
-#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq)]
-struct Session {
-    session_id: Uuid,
-}
-
 #[derive(Debug, Serialize)]
 enum UserRegisterState {
     Success,
-    NameUsed,
     PasswordTooWeak,
+    OtherError
 }
 
 #[derive(Debug, Serialize)]
@@ -99,8 +112,65 @@ struct UserLoginInfo {
     session_info: Option<Session>,
 }
 
-async fn user_register() -> Json<UserRegisterResultInfo> {
-    unimplemented!();
+#[derive(Debug, Deserialize)]
+struct UserRegisterRequest {
+    username: String,
+    password: String,
+}
+
+async fn user_register(
+    State(pool): State<ConnectionPool>,
+    State(sesson_map): State<SessionMap>,
+    Json(user_reg_req): Json<UserRegisterRequest>,
+) -> Json<UserRegisterResultInfo> {
+    if !check_password(&user_reg_req.password) {
+        return UserRegisterResultInfo {
+            state: UserRegisterState::PasswordTooWeak,
+            session_info: None,
+        }
+        .into();
+    }
+    if !check_username(&user_reg_req.username){
+        return UserRegisterResultInfo {
+            state: UserRegisterState::OtherError,
+            session_info: None,
+        }
+        .into();
+    }
+    // let uuid = 
+    let user_id: (i64,) = sqlx::query_as(
+        "INSERT INTO adv_chat.user
+        (user_name, user_passwd_hash, salt, avatar, created_at)
+        VALUES($1, $2, $3, $4, now() at time zone 'utc') 
+        RETURNING user_id")
+        .bind(&user_reg_req.username)
+        .bind([1 as u8;32])
+        .bind("salt")
+        .bind("#22ff22").fetch_one(&pool).await.expect("failed to insert new users");
+    debug!("user_id: {}", user_id.0);
+    UserRegisterResultInfo {
+        state: UserRegisterState::Success,
+        session_info: None,
+    }
+    .into()
+}
+
+fn check_password(password: &str) -> bool {
+    if password.len() < 6 {
+        return false;
+    }
+    true
+}
+
+fn check_username(username: &str) -> bool {
+    if username.is_empty() {
+        return false;
+    }
+    true
+}
+
+fn gen_password_hash(){
+    
 }
 
 async fn user_login() -> Json<UserLoginInfo> {
