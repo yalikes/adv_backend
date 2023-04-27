@@ -24,11 +24,17 @@ use tower_http::{
 use tracing::{debug, info};
 use tracing_subscriber::{self};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use lru::LruCache;
+use std::num::NonZeroUsize;
+use uuid::{uuid, Uuid};
 
 #[tokio::main]
 async fn main() {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must set");
+
+    let mut session_cache: LruCache<Session, String> = LruCache::new(NonZeroUsize::new(1024*1024).unwrap());
+
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -63,9 +69,9 @@ async fn main() {
 
 type SessionMap = Arc<Mutex<HashMap<Session, u64>>>;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq)]
 struct Session {
-    session_id: String,
+    session_id: Uuid,
 }
 
 #[derive(Debug, Serialize)]
