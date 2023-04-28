@@ -38,6 +38,7 @@ use uuid::{uuid, Uuid};
 
 mod app_state;
 mod helper;
+mod utils;
 
 use helper::{ConnectionPool, Session, SessionMap};
 
@@ -170,7 +171,7 @@ fn check_username(username: &str) -> bool {
 }
 
 fn gen_password_hash(){
-    
+
 }
 
 async fn user_login() -> Json<UserLoginInfo> {
