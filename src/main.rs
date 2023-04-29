@@ -47,8 +47,9 @@ async fn main() {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must set");
 
-    let mut session_cache: SessionMap =
-        Arc::new(LruCache::new(NonZeroUsize::new(1024 * 1024).unwrap()));
+    let mut session_cache: SessionMap = Arc::new(Mutex::new(LruCache::new(
+        NonZeroUsize::new(1024 * 1024).unwrap(),
+    )));
 
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::registry()
@@ -92,13 +93,14 @@ async fn main() {
 enum UserRegisterState {
     Success,
     PasswordTooWeak,
-    OtherError
+    OtherError,
 }
 
 #[derive(Debug, Serialize)]
 struct UserRegisterResultInfo {
     state: UserRegisterState,
     session_info: Option<Session>,
+    user_id: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -128,30 +130,48 @@ async fn user_register(
         return UserRegisterResultInfo {
             state: UserRegisterState::PasswordTooWeak,
             session_info: None,
+            user_id: None,
         }
         .into();
     }
-    if !check_username(&user_reg_req.username){
+    if !check_username(&user_reg_req.username) {
         return UserRegisterResultInfo {
             state: UserRegisterState::OtherError,
             session_info: None,
+            user_id: None,
         }
         .into();
     }
-    // let uuid = 
-    let user_id: (i64,) = sqlx::query_as(
+    let uuid = Uuid::new_v4();
+    let session_id = Session { session_id: uuid };
+    let user_id: i64 = match sqlx::query_as::<_, (i64,)>(
         "INSERT INTO adv_chat.user
         (user_name, user_passwd_hash, salt, avatar, created_at)
         VALUES($1, $2, $3, $4, now() at time zone 'utc') 
-        RETURNING user_id")
-        .bind(&user_reg_req.username)
-        .bind([1 as u8;32])
-        .bind("salt")
-        .bind("#22ff22").fetch_one(&pool).await.expect("failed to insert new users");
-    debug!("user_id: {}", user_id.0);
+        RETURNING user_id",
+    )
+    .bind(&user_reg_req.username)
+    .bind([1 as u8; 32])
+    .bind("salt")
+    .bind("#22ff22")
+    .fetch_one(&pool)
+    .await
+    {
+        Ok(r) => r.0,
+        Err(_) => {
+            return UserRegisterResultInfo {
+                state: UserRegisterState::OtherError,
+                session_info: None,
+                user_id: None,
+            }
+            .into();
+        }
+    };
+    sesson_map.lock().unwrap().put(session_id, user_id as u64);
     UserRegisterResultInfo {
         state: UserRegisterState::Success,
-        session_info: None,
+        session_info: Some(session_id),
+        user_id: Some(user_id as u64),
     }
     .into()
 }
@@ -170,9 +190,7 @@ fn check_username(username: &str) -> bool {
     true
 }
 
-fn gen_password_hash(){
-
-}
+fn gen_password_hash() {}
 
 async fn user_login() -> Json<UserLoginInfo> {
     unimplemented!();
