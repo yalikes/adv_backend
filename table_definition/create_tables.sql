@@ -31,3 +31,6 @@ CREATE TABLE adv_chat.group_message(
     group_message varchar(4096),
     created_at timestamp
 );
+
+ALTER SEQUENCE adv_chat.user_user_id_seq RESTART WITH 100000;
+ALTER SEQUENCE adv_chat.group_group_id_seq RESTART WITH 100000;

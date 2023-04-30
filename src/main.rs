@@ -19,6 +19,7 @@ use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
+use utils::generate_salt_and_hash;
 use std::env;
 use std::num::NonZeroUsize;
 use std::{
@@ -142,6 +143,10 @@ async fn user_register(
         }
         .into();
     }
+
+    let (hash,salt) = generate_salt_and_hash(&user_reg_req.password);
+    let salt: String = salt.iter().collect();
+
     let uuid = Uuid::new_v4();
     let session_id = Session { session_id: uuid };
     let user_id: i64 = match sqlx::query_as::<_, (i64,)>(
@@ -151,9 +156,9 @@ async fn user_register(
         RETURNING user_id",
     )
     .bind(&user_reg_req.username)
-    .bind([1 as u8; 32])
-    .bind("salt")
-    .bind("#22ff22")
+    .bind(hash)
+    .bind(salt)
+    .bind("#27A5F3")
     .fetch_one(&pool)
     .await
     {
