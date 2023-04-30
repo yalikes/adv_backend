@@ -19,7 +19,6 @@ use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
-use utils::generate_salt_and_hash;
 use std::env;
 use std::num::NonZeroUsize;
 use std::{
@@ -35,6 +34,7 @@ use tower_http::{
 use tracing::{debug, info};
 use tracing_subscriber::{self};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use utils::generate_salt_and_hash;
 use uuid::{uuid, Uuid};
 
 mod app_state;
@@ -42,6 +42,8 @@ mod helper;
 mod utils;
 
 use helper::{ConnectionPool, Session, SessionMap};
+
+use crate::utils::check;
 
 #[tokio::main]
 async fn main() {
@@ -65,7 +67,7 @@ async fn main() {
         .connect(&database_url)
         .await
         .expect("failed to connect database");
-    let mut state = AppState {
+    let state = AppState {
         sesson_map: session_cache,
         db_pool: pool,
     };
@@ -108,12 +110,19 @@ struct UserRegisterResultInfo {
 enum UserLoginState {
     Success,
     WrongPassword,
+    OtherError,
 }
 
 #[derive(Debug, Serialize)]
 struct UserLoginInfo {
     state: UserLoginState,
     session_info: Option<Session>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserLoginRequest {
+    user_id: u64,
+    password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,7 +153,7 @@ async fn user_register(
         .into();
     }
 
-    let (hash,salt) = generate_salt_and_hash(&user_reg_req.password);
+    let (hash, salt) = generate_salt_and_hash(&user_reg_req.password);
     let salt: String = salt.iter().collect();
 
     let uuid = Uuid::new_v4();
@@ -195,8 +204,55 @@ fn check_username(username: &str) -> bool {
     true
 }
 
-fn gen_password_hash() {}
-
-async fn user_login() -> Json<UserLoginInfo> {
-    unimplemented!();
+async fn user_login(
+    State(pool): State<ConnectionPool>,
+    State(sesson_map): State<SessionMap>,
+    Json(user_login_req): Json<UserLoginRequest>,
+) -> Json<UserLoginInfo> {
+    if !check_password(&user_login_req.password) {
+        return UserLoginInfo {
+            state: UserLoginState::WrongPassword,
+            session_info: None,
+        }
+        .into();
+    }
+    let user_id = user_login_req.user_id;
+    let password = user_login_req.password;
+    let (user_passwd_hash, salt): ([u8; 32], String) = match sqlx::query_as(
+        "
+    SELECT user_passwd_hash, salt
+    FROM adv_chat.user
+    WHERE user_id = $1
+    ",
+    )
+    .bind(user_id as i64)
+    .fetch_one(&pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            debug!("can't find user: {:?}", e);
+            return UserLoginInfo {
+                state: UserLoginState::OtherError,
+                session_info: None,
+            }
+            .into();
+        }
+    };
+    if check(&password, &salt, user_passwd_hash) {
+        let uuid = Uuid::new_v4();
+        let session_id = Session { session_id: uuid };
+        sesson_map.lock().unwrap().put(session_id, user_id as u64);
+        UserLoginInfo {
+            state: UserLoginState::Success,
+            session_info: Some(session_id),
+        }
+        .into()
+    } else {
+        UserLoginInfo {
+            state: UserLoginState::WrongPassword,
+            session_info: None,
+        }
+        .into()
+    }
 }
