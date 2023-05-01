@@ -1,23 +1,19 @@
 use app_state::AppState;
+use axum::extract::connect_info::ConnectInfo;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::ServiceExt;
 use axum::{
-    async_trait,
-    extract::{FromRequest, State},
-    http::StatusCode,
-    response::{IntoResponse, IntoResponseParts, Response},
-    routing::{get, get_service, post},
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    extract::State,
+    routing::post,
     Json, Router,
 };
 use dotenvy::dotenv;
-use hyper::{
-    body::HttpBody,
-    header::{self, ACCEPT},
-    http::HeaderValue,
-    HeaderMap,
-};
-use hyper::{Method, Request};
+use hyper::http::HeaderValue;
+use hyper::Method;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::num::NonZeroUsize;
@@ -25,17 +21,15 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
-use std::{thread, time::Duration};
-use tower_http::cors::{AllowOrigin, Cors};
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::{debug, info};
+use tracing::debug;
 use tracing_subscriber::{self};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use utils::generate_salt_and_hash;
-use uuid::{uuid, Uuid};
+use uuid::Uuid;
 
 mod app_state;
 mod helper;
@@ -50,7 +44,7 @@ async fn main() {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must set");
 
-    let mut session_cache: SessionMap = Arc::new(Mutex::new(LruCache::new(
+    let session_cache: SessionMap = Arc::new(Mutex::new(LruCache::new(
         NonZeroUsize::new(1024 * 1024).unwrap(),
     )));
 
@@ -74,6 +68,7 @@ async fn main() {
     let app = Router::new()
         .route("/user/register", post(user_register))
         .route("/user/login", post(user_login))
+        .route("/tunnel", get(ws_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(
@@ -87,7 +82,7 @@ async fn main() {
         .with_state(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();
 }
@@ -254,5 +249,42 @@ async fn user_login(
             session_info: None,
         }
         .into()
+    }
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade
+) -> impl IntoResponse {
+    debug!("{:?}", ws);
+    ws.on_upgrade(move |socket| handle_socket(socket))
+}
+async fn handle_socket(mut socket: WebSocket) {
+    let session: Session = match check_token(&mut socket).await {
+        Ok(s) => s,
+        Err(_) => {
+            return;
+        }
+    };
+    debug!("{:?}", session);
+}
+
+async fn check_token(socket: &mut WebSocket) -> Result<Session, ()> {
+    match socket.recv().await {
+        Some(r) => match r {
+            Ok(m) => match m {
+                Message::Text(t) => serde_json::from_str(&t).map_err(|e| debug!("{:?}", e)),
+                _ => {
+                    debug!("{:?}", m);
+                    return Err(());
+                }
+            },
+            Err(e) => {
+                debug!("{:?}", e);
+                return Err(());
+            }
+        },
+        None => {
+            return Err(());
+        }
     }
 }
