@@ -8,10 +8,11 @@ use axum::{
     Json, Router,
 };
 use dotenvy::dotenv;
+use futures::stream::SplitStream;
 use hyper::http::HeaderValue;
 use hyper::Method;
 use lru::LruCache;
-use message::message_processing;
+use message::{message_private, message_processing};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
@@ -23,8 +24,9 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
-
 use tokio::task;
+
+use futures::{sink::SinkExt, stream::StreamExt};
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
     trace::TraceLayer,
@@ -62,12 +64,13 @@ async fn main() {
 
     let group_info_table_ref = group_info_table.clone();
     let user_connection_map_ref = user_connection_map.clone();
-    thread::spawn(move ||
+    thread::spawn(move || {
         message_processing(
-        message_receiver,
-        user_connection_map_ref,
-        group_info_table_ref,
-    ));
+            message_receiver,
+            user_connection_map_ref,
+            group_info_table_ref,
+        )
+    });
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -93,7 +96,7 @@ async fn main() {
         .route("/user/register", post(user_register))
         .route("/user/login", post(user_login))
         .route("/tunnel", get(ws_handler))
-        .route("/message/private", post(|| async {}))
+        .route("/message/private", post(message_private))
         .route("/message/group", post(|| async {}))
         .layer(
             CorsLayer::new()
@@ -291,7 +294,10 @@ async fn handle_socket(
     session_map: SessionMap,
     user_connection_map: UserConnectionMap,
 ) {
-    let session: Session = match check_token(&mut socket).await {
+    let (mut sender, mut receiver) = socket.split();
+    let (mut sender_unbouned, mut receiver_unbounded) =
+        tokio::sync::mpsc::unbounded_channel::<Message>();
+    let session: Session = match check_token(&mut receiver).await {
         Ok(s) => s,
         Err(_) => {
             return;
@@ -304,26 +310,23 @@ async fn handle_socket(
             return;
         }
     };
-    user_connection_map.lock().unwrap().insert(user_id, socket);
+    user_connection_map
+        .lock()
+        .unwrap()
+        .insert(user_id, sender_unbouned);
+    while let Some(r) = receiver_unbounded.recv().await {
+        sender.send(r).await;
+    }
 }
 
-async fn check_token(socket: &mut WebSocket) -> Result<Session, ()> {
-    match socket.recv().await {
-        Some(r) => match r {
-            Ok(m) => match m {
-                Message::Text(t) => serde_json::from_str(&t).map_err(|e| debug!("{:?}", e)),
-                _ => {
-                    debug!("{:?}", m);
-                    return Err(());
-                }
-            },
-            Err(e) => {
-                debug!("{:?}", e);
-                return Err(());
-            }
-        },
-        None => {
-            return Err(());
+async fn check_token(stream: &mut SplitStream<WebSocket>) -> Result<Session, ()> {
+    if let Some(Ok(m)) = stream.next().await {
+        if let Message::Text(t) = m {
+            serde_json::from_str(&t).map_err(|e| debug!("{:?}", e))
+        } else {
+            Err(())
         }
+    } else {
+        Err(())
     }
 }
