@@ -1,8 +1,6 @@
 use app_state::AppState;
-use axum::extract::connect_info::ConnectInfo;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::ServiceExt;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::State,
@@ -15,8 +13,10 @@ use hyper::Method;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
+use std::collections::HashMap;
 use std::env;
 use std::num::NonZeroUsize;
+use std::thread;
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -35,7 +35,7 @@ mod app_state;
 mod helper;
 mod utils;
 
-use helper::{ConnectionPool, Session, SessionMap};
+use helper::{ConnectionPool, GroupInfoTable, Session, SessionMap, UserConnectionMap};
 
 use crate::utils::check;
 
@@ -47,6 +47,11 @@ async fn main() {
     let session_cache: SessionMap = Arc::new(Mutex::new(LruCache::new(
         NonZeroUsize::new(1024 * 1024).unwrap(),
     )));
+
+    let group_info_table: GroupInfoTable = Arc::new(Mutex::new(LruCache::new(
+        NonZeroUsize::new(64 * 1024).unwrap(),
+    )));
+    let user_connection_map: UserConnectionMap = Arc::new(Mutex::new(HashMap::new()));
 
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::registry()
@@ -63,12 +68,17 @@ async fn main() {
         .expect("failed to connect database");
     let state = AppState {
         sesson_map: session_cache,
-        db_pool: pool,
+        db_pool: pool.clone(),
+        group_info_table: group_info_table.clone(),
+        user_connection_map: user_connection_map.clone(),
     };
+    thread::spawn(move || {});
     let app = Router::new()
         .route("/user/register", post(user_register))
         .route("/user/login", post(user_login))
         .route("/tunnel", get(ws_handler))
+        .route("/message/private", post(|| async {}))
+        .route("/message/group", post(|| async {}))
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(
@@ -253,12 +263,18 @@ async fn user_login(
 }
 
 async fn ws_handler(
-    ws: WebSocketUpgrade
+    ws: WebSocketUpgrade,
+    State(sesson_map): State<SessionMap>,
+    State(user_connection_map): State<UserConnectionMap>,
 ) -> impl IntoResponse {
     debug!("{:?}", ws);
-    ws.on_upgrade(move |socket| handle_socket(socket))
+    ws.on_upgrade(move |socket| handle_socket(socket, sesson_map, user_connection_map))
 }
-async fn handle_socket(mut socket: WebSocket) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    session_map: SessionMap,
+    user_connection_map: UserConnectionMap,
+) {
     let session: Session = match check_token(&mut socket).await {
         Ok(s) => s,
         Err(_) => {
@@ -266,6 +282,13 @@ async fn handle_socket(mut socket: WebSocket) {
         }
     };
     debug!("{:?}", session);
+    let user_id = match session_map.lock().unwrap().get(&session) {
+        Some(user_id) => *user_id,
+        None => {
+            return;
+        }
+    };
+    user_connection_map.lock().unwrap().insert(user_id, socket);
 }
 
 async fn check_token(socket: &mut WebSocket) -> Result<Session, ()> {
@@ -287,4 +310,18 @@ async fn check_token(socket: &mut WebSocket) -> Result<Session, ()> {
             return Err(());
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum MessageType {
+    Private,
+    Group,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatMessage {
+    message_type: MessageType,
+    content: String,
+    sender_id: u64,
+    reciver_id: u64,
 }
