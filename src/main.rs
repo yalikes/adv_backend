@@ -11,16 +11,20 @@ use dotenvy::dotenv;
 use hyper::http::HeaderValue;
 use hyper::Method;
 use lru::LruCache;
+use message::message_processing;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::env;
 use std::num::NonZeroUsize;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
+
+use tokio::task;
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
     trace::TraceLayer,
@@ -33,6 +37,7 @@ use uuid::Uuid;
 
 mod app_state;
 mod helper;
+mod message;
 mod utils;
 
 use helper::{ConnectionPool, GroupInfoTable, Session, SessionMap, UserConnectionMap};
@@ -52,7 +57,17 @@ async fn main() {
         NonZeroUsize::new(64 * 1024).unwrap(),
     )));
     let user_connection_map: UserConnectionMap = Arc::new(Mutex::new(HashMap::new()));
+    let (message_sender, message_receiver) = mpsc::channel();
+    let message_sender = Arc::new(Mutex::new(message_sender));
 
+    let group_info_table_ref = group_info_table.clone();
+    let user_connection_map_ref = user_connection_map.clone();
+    thread::spawn(move ||
+        message_processing(
+        message_receiver,
+        user_connection_map_ref,
+        group_info_table_ref,
+    ));
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -71,6 +86,7 @@ async fn main() {
         db_pool: pool.clone(),
         group_info_table: group_info_table.clone(),
         user_connection_map: user_connection_map.clone(),
+        message_sender: message_sender,
     };
     thread::spawn(move || {});
     let app = Router::new()
@@ -310,18 +326,4 @@ async fn check_token(socket: &mut WebSocket) -> Result<Session, ()> {
             return Err(());
         }
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-enum MessageType {
-    Private,
-    Group,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ChatMessage {
-    message_type: MessageType,
-    content: String,
-    sender_id: u64,
-    reciver_id: u64,
 }
