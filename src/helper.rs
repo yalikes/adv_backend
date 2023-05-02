@@ -1,13 +1,13 @@
-use axum::extract::ws::{WebSocket, Message};
+use axum::extract::ws::{Message, WebSocket};
 use futures::stream::SplitSink;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use sqlx::{pool::Pool, Postgres};
-use tokio::sync::mpsc::UnboundedSender;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, mpsc::Sender},
+    sync::{mpsc::Sender, Arc, Mutex},
 };
+use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 use crate::message::ChatMessage;
@@ -20,4 +20,8 @@ pub type MessageSender = Arc<Mutex<Sender<ChatMessage>>>;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct Session {
     pub session_id: Uuid,
+}
+
+pub fn get_user_id(session_map: SessionMap, session: Session) -> Option<u64> {
+    session_map.lock().unwrap().get(&session).map(|u| *u)
 }

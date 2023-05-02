@@ -15,16 +15,16 @@ use lru::LruCache;
 use message::{message_private, message_processing};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
+use user_info::query_user_info;
 use std::collections::HashMap;
 use std::env;
 use std::num::NonZeroUsize;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc;
 use std::thread;
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
-use tokio::task;
 
 use futures::{sink::SinkExt, stream::StreamExt};
 use tower_http::{
@@ -41,6 +41,7 @@ mod app_state;
 mod helper;
 mod message;
 mod utils;
+mod user_info;
 
 use helper::{ConnectionPool, GroupInfoTable, Session, SessionMap, UserConnectionMap};
 
@@ -95,6 +96,7 @@ async fn main() {
     let app = Router::new()
         .route("/user/register", post(user_register))
         .route("/user/login", post(user_login))
+        .route("/user/info", post(query_user_info))
         .route("/tunnel", get(ws_handler))
         .route("/message/private", post(message_private))
         .route("/message/group", post(|| async {}))
@@ -290,12 +292,12 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, sesson_map, user_connection_map))
 }
 async fn handle_socket(
-    mut socket: WebSocket,
+    socket: WebSocket,
     session_map: SessionMap,
     user_connection_map: UserConnectionMap,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let (mut sender_unbouned, mut receiver_unbounded) =
+    let (sender_unbouned, mut receiver_unbounded) =
         tokio::sync::mpsc::unbounded_channel::<Message>();
     let session: Session = match check_token(&mut receiver).await {
         Ok(s) => s,
@@ -330,3 +332,5 @@ async fn check_token(stream: &mut SplitStream<WebSocket>) -> Result<Session, ()>
         Err(())
     }
 }
+
+
