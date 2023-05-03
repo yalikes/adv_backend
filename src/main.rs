@@ -98,8 +98,7 @@ async fn main() {
         .route("/user/login", post(user_login))
         .route("/user/info", post(query_user_info))
         .route("/tunnel", get(ws_handler))
-        .route("/message/private", post(message_private))
-        .route("/message/group", post(|| async {}))
+        .route("/message", post(message_private))
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(

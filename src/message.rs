@@ -17,6 +17,12 @@ use crate::{
     UserLoginRequest,
 };
 
+#[derive(Debug, Serialize)]
+pub struct MessagePlain {
+    user_id: u64,
+    content: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MessageType {
     Private,
@@ -70,7 +76,7 @@ pub async fn message_private(
         .lock()
         .unwrap()
         .send(ChatMessage {
-            message_type: MessageType::Private,
+            message_type: message_req.message_type,
             content: message_req.content,
             sender_id: user_id,
             reciver_id: message_req.reciver_id,
@@ -95,9 +101,13 @@ pub fn message_processing(
                     debug!("{:?}", msg);
                     if let Some(may_sender) = user_connection_map.lock().unwrap().get_mut(&user_id)
                     {
-                        if let Err(err) =
-                            may_sender.send(axum::extract::ws::Message::Text("Hello".to_owned()))
-                        {
+                        if let Err(err) = may_sender.send(axum::extract::ws::Message::Text(
+                            serde_json::to_string(&MessagePlain {
+                                user_id,
+                                content: msg.content,
+                            })
+                            .unwrap(),
+                        )) {
                             debug!("{:?}", err);
                         }
                     }
