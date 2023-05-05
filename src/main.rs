@@ -10,6 +10,7 @@ use axum::{
 use dotenvy::dotenv;
 use friends::{query_friends_info, user_add_friend};
 use futures::stream::SplitStream;
+use group_info::new_group;
 use hyper::http::HeaderValue;
 use hyper::Method;
 use lru::LruCache;
@@ -106,6 +107,7 @@ async fn main() {
         .route("/user/friends", post(query_friends_info))
         .route("/user/add/friend", post(user_add_friend))
         .route("/group/add/member", post(|| async {}))
+        .route("/group/new", post(new_group))
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(
