@@ -25,7 +25,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
-use user_info::{query_user_info, query_user_this};
+use user_info::{query_user_groups, query_user_info, query_user_this};
 
 use futures::{sink::SinkExt, stream::StreamExt};
 use tower_http::{
@@ -40,6 +40,7 @@ use uuid::Uuid;
 
 mod app_state;
 mod friends;
+mod group_info;
 mod helper;
 mod message;
 mod user_info;
@@ -102,7 +103,7 @@ async fn main() {
         .route("/user/this", post(query_user_this))
         .route("/tunnel", get(ws_handler))
         .route("/message", post(message_private))
-        .route("/user/groups", post(||async{}))
+        .route("/user/groups", post(query_user_groups))
         .route("/user/friends", post(query_friends_info))
         .route("/user/add/friend", post(user_add_friend))
         .route("/group/add/member", post(|| async {}))
