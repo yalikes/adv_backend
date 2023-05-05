@@ -95,7 +95,6 @@ async fn main() {
         user_connection_map: user_connection_map.clone(),
         message_sender: message_sender,
     };
-    thread::spawn(move || {});
     let app = Router::new()
         .route("/user/register", post(user_register))
         .route("/user/login", post(user_login))
