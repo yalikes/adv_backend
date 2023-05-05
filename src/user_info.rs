@@ -1,5 +1,6 @@
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use tracing::debug;
 
 use crate::helper::{get_user_id, ConnectionPool, Session, SessionMap};
@@ -10,9 +11,9 @@ enum UserInfoQueryState {
     Error,
 }
 
-#[derive(Debug, Serialize)]
-struct UserInfo {
-    user_id: u64,
+#[derive(Debug, Serialize, FromRow)]
+pub struct UserInfo {
+    user_id: i64,
     user_name: String,
     avatar: String,
 }
@@ -67,7 +68,7 @@ pub async fn query_user_info(
     UserInfoResult {
         state: UserInfoQueryState::Ok,
         info: Some(UserInfo {
-            user_id: user_id as u64,
+            user_id: user_id,
             user_name,
             avatar,
         }),

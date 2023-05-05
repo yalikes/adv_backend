@@ -19,6 +19,7 @@ use crate::{
 
 #[derive(Debug, Serialize)]
 pub struct MessagePlain {
+    message_type: MessageType,
     user_id: u64,
     content: String,
 }
@@ -98,12 +99,14 @@ pub fn message_processing(
             Ok(msg) => match msg.message_type {
                 MessageType::Private => {
                     let user_id = msg.reciver_id;
+                    let sender_id = msg.sender_id;
                     debug!("{:?}", msg);
                     if let Some(may_sender) = user_connection_map.lock().unwrap().get_mut(&user_id)
                     {
                         if let Err(err) = may_sender.send(axum::extract::ws::Message::Text(
                             serde_json::to_string(&MessagePlain {
-                                user_id,
+                                message_type: MessageType::Private,
+                                user_id: sender_id,
                                 content: msg.content,
                             })
                             .unwrap(),

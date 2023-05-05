@@ -8,6 +8,7 @@ use axum::{
     Json, Router,
 };
 use dotenvy::dotenv;
+use friends::{query_friends_info, user_add_friend};
 use futures::stream::SplitStream;
 use hyper::http::HeaderValue;
 use hyper::Method;
@@ -15,7 +16,6 @@ use lru::LruCache;
 use message::{message_private, message_processing};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
-use user_info::query_user_info;
 use std::collections::HashMap;
 use std::env;
 use std::num::NonZeroUsize;
@@ -25,6 +25,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
+use user_info::query_user_info;
 
 use futures::{sink::SinkExt, stream::StreamExt};
 use tower_http::{
@@ -38,10 +39,11 @@ use utils::generate_salt_and_hash;
 use uuid::Uuid;
 
 mod app_state;
+mod friends;
 mod helper;
 mod message;
-mod utils;
 mod user_info;
+mod utils;
 
 use helper::{ConnectionPool, GroupInfoTable, Session, SessionMap, UserConnectionMap};
 
@@ -99,6 +101,9 @@ async fn main() {
         .route("/user/info", post(query_user_info))
         .route("/tunnel", get(ws_handler))
         .route("/message", post(message_private))
+        .route("/user/friends", post(query_friends_info))
+        .route("/user/add/friend", post(user_add_friend))
+        .route("/group/add/member", post(|| async {}))
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::list(
@@ -119,7 +124,7 @@ async fn main() {
 
 #[derive(Debug, Serialize)]
 enum UserRegisterState {
-    Success,
+    Ok,
     PasswordTooWeak,
     OtherError,
 }
@@ -208,7 +213,7 @@ async fn user_register(
     };
     sesson_map.lock().unwrap().put(session_id, user_id as u64);
     UserRegisterResultInfo {
-        state: UserRegisterState::Success,
+        state: UserRegisterState::Ok,
         session_info: Some(session_id),
         user_id: Some(user_id as u64),
     }
@@ -331,5 +336,3 @@ async fn check_token(stream: &mut SplitStream<WebSocket>) -> Result<Session, ()>
         Err(())
     }
 }
-
-

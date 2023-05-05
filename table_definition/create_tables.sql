@@ -5,6 +5,8 @@ CREATE TABLE adv_chat.user(
     user_passwd_hash bytea,
     salt text,
     avatar text,
+    friends bigint[],
+    group_list bigint[],
     created_at timestamp
 );
 
