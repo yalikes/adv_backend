@@ -14,7 +14,7 @@ use group_info::new_group;
 use hyper::http::HeaderValue;
 use hyper::Method;
 use lru::LruCache;
-use message::{message_private, message_processing};
+use message::{message_from_client, message_processing};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
@@ -26,6 +26,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
+use sync_message::sync_message_client;
 use user_info::{group_add_member, query_user_groups, query_user_info, query_user_this};
 
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -44,6 +45,7 @@ mod friends;
 mod group_info;
 mod helper;
 mod message;
+mod sync_message;
 mod user_info;
 mod utils;
 
@@ -69,13 +71,7 @@ async fn main() {
 
     let group_info_table_ref = group_info_table.clone();
     let user_connection_map_ref = user_connection_map.clone();
-    thread::spawn(move || {
-        message_processing(
-            message_receiver,
-            user_connection_map_ref,
-            group_info_table_ref,
-        )
-    });
+
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -89,6 +85,14 @@ async fn main() {
         .connect(&database_url)
         .await
         .expect("failed to connect database");
+    let pool_ref = pool.clone();
+    thread::spawn(move || {
+        message_processing(
+            pool_ref,
+            message_receiver,
+            user_connection_map_ref,
+        )
+    });
     let state = AppState {
         sesson_map: session_cache,
         db_pool: pool.clone(),
@@ -102,7 +106,8 @@ async fn main() {
         .route("/user/info", post(query_user_info))
         .route("/user/this", post(query_user_this))
         .route("/tunnel", get(ws_handler))
-        .route("/message", post(message_private))
+        .route("/message", post(message_from_client))
+        .route("/user/message/sync", post(sync_message_client))
         .route("/user/groups", post(query_user_groups))
         .route("/user/friends", post(query_friends_info))
         .route("/user/add/friend", post(user_add_friend))

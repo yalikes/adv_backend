@@ -97,7 +97,10 @@ pub async fn new_group(
     .into()
 }
 
-pub async fn get_group_users(pool: &ConnectionPool, group_id: i64) -> Result<Vec<i64>, sqlx::Error> {
+pub async fn get_group_users(
+    pool: &ConnectionPool,
+    group_id: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
     let g_users = sqlx::query_as::<_, (i64,)>(
         r#"
         SELECT UNNEST(user_list)
@@ -137,10 +140,16 @@ pub async fn group_add_user(
     new_user_id: i64,
 ) -> Result<Vec<i64>, sqlx::Error> {
     let mut g_user_ids = get_group_users(pool, group_id).await?;
-    if g_user_ids.contains(&new_user_id){
+    if g_user_ids.contains(&new_user_id) {
         return Ok(g_user_ids);
     }
     g_user_ids.push(new_user_id);
     set_group_users(pool, group_id, &g_user_ids).await?;
-    return Ok(g_user_ids)
+    return Ok(g_user_ids);
+}
+
+pub fn get_group_users_sync(pool: &ConnectionPool, group_id: i64) -> Result<Vec<i64>, sqlx::Error> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let users = rt.block_on(get_group_users(pool, group_id))?;
+    Ok(users)
 }

@@ -173,7 +173,7 @@ pub async fn query_user_groups(
     .into()
 }
 
-async fn get_user_group_ids(pool: &ConnectionPool, user_id: i64) -> Result<Vec<i64>, sqlx::Error> {
+pub async fn get_user_group_ids(pool: &ConnectionPool, user_id: i64) -> Result<Vec<i64>, sqlx::Error> {
     let group_list = sqlx::query_as::<_, (i64,)>(
         r#"
     SELECT UNNEST(group_list)
@@ -206,6 +206,7 @@ pub async fn group_add_member(
 ) -> Json<GroupAddMemberResult> {
     let session = group_add_member.session;
     let new_group_id = group_add_member.group_id as i64;
+    debug!("{:?}", group_add_member);
     let user_id = get_user_id(session_map, session);
     if user_id.is_none() {
         return GroupAddMemberResult {
@@ -236,17 +237,17 @@ pub async fn group_add_member(
                 .into();
             }
         };
-        match group_add_user(&pool, new_group_id, user_id as i64).await {
-            Ok(_) => {}
-            Err(e) => {
-                debug!("{:?}", e);
-                return GroupAddMemberResult {
-                    state: OperationState::Err,
-                }
-                .into();
-            }
-        };
     }
+    match group_add_user(&pool, new_group_id, user_id as i64).await {
+        Ok(_) => {}
+        Err(e) => {
+            debug!("{:?}", e);
+            return GroupAddMemberResult {
+                state: OperationState::Err,
+            }
+            .into();
+        }
+    };
     GroupAddMemberResult {
         state: OperationState::Ok,
     }
