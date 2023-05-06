@@ -25,3 +25,9 @@ pub struct Session {
 pub fn get_user_id(session_map: SessionMap, session: Session) -> Option<u64> {
     session_map.lock().unwrap().get(&session).map(|u| *u)
 }
+
+#[derive(Debug, Serialize)]
+pub enum OperationState {
+    Ok,
+    Err,
+}

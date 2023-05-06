@@ -4,8 +4,8 @@ use sqlx::FromRow;
 use tracing::debug;
 
 use crate::{
-    group_info::{get_group, Group},
-    helper::{get_user_id, ConnectionPool, Session, SessionMap},
+    group_info::{get_group, group_add_user, Group},
+    helper::{get_user_id, ConnectionPool, OperationState, Session, SessionMap},
 };
 
 #[derive(Debug, Serialize)]
@@ -186,4 +186,89 @@ async fn get_user_group_ids(pool: &ConnectionPool, user_id: i64) -> Result<Vec<i
     .await?;
     let group_list = group_list.iter().map(|g_id| g_id.0).collect();
     Ok(group_list)
+}
+
+#[derive(Debug, Serialize)]
+pub struct GroupAddMemberResult {
+    state: OperationState,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GroupAddMemberRequest {
+    session: Session,
+    group_id: u64,
+}
+
+pub async fn group_add_member(
+    State(pool): State<ConnectionPool>,
+    State(session_map): State<SessionMap>,
+    Json(group_add_member): Json<GroupAddMemberRequest>,
+) -> Json<GroupAddMemberResult> {
+    let session = group_add_member.session;
+    let new_group_id = group_add_member.group_id as i64;
+    let user_id = get_user_id(session_map, session);
+    if user_id.is_none() {
+        return GroupAddMemberResult {
+            state: OperationState::Err,
+        }
+        .into();
+    }
+    let user_id = user_id.unwrap();
+    let mut group_ids = match get_user_group_ids(&pool, user_id as i64).await {
+        Ok(g_ids) => g_ids,
+        Err(e) => {
+            debug!("at query group ids: {:?}", e);
+            return GroupAddMemberResult {
+                state: OperationState::Err,
+            }
+            .into();
+        }
+    };
+    if !group_ids.contains(&(group_add_member.group_id as i64)) {
+        group_ids.push(new_group_id);
+        match set_user_group_ids(&pool, group_ids, user_id as i64).await {
+            Ok(_) => {}
+            Err(e) => {
+                debug!("{:?}", e);
+                return GroupAddMemberResult {
+                    state: OperationState::Err,
+                }
+                .into();
+            }
+        };
+        match group_add_user(&pool, new_group_id, user_id as i64).await {
+            Ok(_) => {}
+            Err(e) => {
+                debug!("{:?}", e);
+                return GroupAddMemberResult {
+                    state: OperationState::Err,
+                }
+                .into();
+            }
+        };
+    }
+    GroupAddMemberResult {
+        state: OperationState::Ok,
+    }
+    .into()
+}
+
+async fn set_user_group_ids(
+    pool: &ConnectionPool,
+    group_ids: Vec<i64>,
+    user_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+    UPDATE adv_chat.user
+    SET group_list = $1
+    WHERE user_id = $2
+    "#,
+    )
+    .bind(group_ids)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+
+    unimplemented!()
 }

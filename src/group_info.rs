@@ -96,3 +96,51 @@ pub async fn new_group(
     }
     .into()
 }
+
+pub async fn get_group_users(pool: &ConnectionPool, group_id: i64) -> Result<Vec<i64>, sqlx::Error> {
+    let g_users = sqlx::query_as::<_, (i64,)>(
+        r#"
+        SELECT UNNEST(user_list)
+        FROM adv_chat.group
+        WHERE group_id = $1
+    "#,
+    )
+    .bind(group_id)
+    .fetch_all(pool)
+    .await?;
+    let g_users: Vec<i64> = g_users.iter().map(|u| u.0).collect();
+    return Ok(g_users);
+}
+
+pub async fn set_group_users(
+    pool: &ConnectionPool,
+    group_id: i64,
+    new_user_ids: &[i64],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE adv_chat.group
+        SET user_list = $1
+        WHERE group_id = $2
+    "#,
+    )
+    .bind(new_user_ids)
+    .bind(group_id)
+    .fetch_all(pool)
+    .await?;
+    return Ok(());
+}
+
+pub async fn group_add_user(
+    pool: &ConnectionPool,
+    group_id: i64,
+    new_user_id: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
+    let mut g_user_ids = get_group_users(pool, group_id).await?;
+    if g_user_ids.contains(&new_user_id){
+        return Ok(g_user_ids);
+    }
+    g_user_ids.push(new_user_id);
+    set_group_users(pool, group_id, &g_user_ids).await?;
+    return Ok(g_user_ids)
+}

@@ -26,7 +26,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
-use user_info::{query_user_groups, query_user_info, query_user_this};
+use user_info::{group_add_member, query_user_groups, query_user_info, query_user_this};
 
 use futures::{sink::SinkExt, stream::StreamExt};
 use tower_http::{
@@ -106,7 +106,7 @@ async fn main() {
         .route("/user/groups", post(query_user_groups))
         .route("/user/friends", post(query_friends_info))
         .route("/user/add/friend", post(user_add_friend))
-        .route("/group/add/member", post(|| async {}))
+        .route("/group/add/member", post(group_add_member))
         .route("/group/new", post(new_group))
         .layer(
             CorsLayer::new()
