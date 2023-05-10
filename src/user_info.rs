@@ -215,6 +215,16 @@ pub async fn group_add_member(
         .into();
     }
     let user_id = user_id.unwrap();
+    match group_add_user(&pool, new_group_id, user_id as i64).await {
+        Ok(_) => {}
+        Err(e) => {
+            debug!("{:?}", e);
+            return GroupAddMemberResult {
+                state: OperationState::Err,
+            }
+            .into();
+        }
+    };
     let mut group_ids = match get_user_group_ids(&pool, user_id as i64).await {
         Ok(g_ids) => g_ids,
         Err(e) => {
@@ -238,16 +248,6 @@ pub async fn group_add_member(
             }
         };
     }
-    match group_add_user(&pool, new_group_id, user_id as i64).await {
-        Ok(_) => {}
-        Err(e) => {
-            debug!("{:?}", e);
-            return GroupAddMemberResult {
-                state: OperationState::Err,
-            }
-            .into();
-        }
-    };
     GroupAddMemberResult {
         state: OperationState::Ok,
     }
